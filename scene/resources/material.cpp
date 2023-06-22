@@ -82,6 +82,27 @@ void Material::_validate_property(PropertyInfo &p_property) const {
 	}
 }
 
+void Material::_mark_initialized(const Callable &p_queue_shader_change_callable) {
+	// If this is happening as part of resource loading, it is not safe to queue the update
+	// as an addition to the dirty list, unless the load is happening on the main thread.
+	if (ResourceLoader::is_within_load() && Thread::get_caller_id() != Thread::get_main_id()) {
+		DEV_ASSERT(init_state != INIT_STATE_READY);
+		if (init_state == INIT_STATE_UNINITIALIZED) { // Prevent queueing twice.
+			// Let's mark this material as being initialized.
+			init_state = INIT_STATE_INITIALIZING;
+			// Knowing that the ResourceLoader will eventually feed deferred calls into the main message queue, let's do these:
+			// 1. Queue setting the init state to INIT_STATE_READY finally.
+			callable_mp(this, &Material::_mark_initialized).bind(p_queue_shader_change_callable).call_deferred();
+			// 2. Queue an individual update of this material.
+			p_queue_shader_change_callable.call_deferred();
+		}
+	} else {
+		// Straightforward conditions.
+		init_state = INIT_STATE_READY;
+		p_queue_shader_change_callable.callv(Array());
+	}
+}
+
 void Material::inspect_native_shader_code() {
 	SceneTree *st = Object::cast_to<SceneTree>(OS::get_singleton()->get_main_loop());
 	RID shader = get_shader_rid();
@@ -289,10 +310,34 @@ void ShaderMaterial::_get_property_list(List<PropertyInfo> *p_list) const {
 				vgroups.push_back(Pair<String, LocalVector<String>>("<None>", { "<None>" }));
 			}
 
+			const bool is_uniform_cached = param_cache.has(E->get().name);
+			bool is_uniform_type_compatible = true;
+
+			if (is_uniform_cached) {
+				// Check if the uniform Variant type changed, for example vec3 to vec4.
+				const Variant &cached = param_cache.get(E->get().name);
+
+				if (cached.is_array()) {
+					// Allow some array conversions for backwards compatibility.
+					is_uniform_type_compatible = Variant::can_convert(E->get().type, cached.get_type());
+				} else {
+					is_uniform_type_compatible = E->get().type == cached.get_type();
+				}
+
+				if (is_uniform_type_compatible && E->get().type == Variant::OBJECT && cached.get_type() == Variant::OBJECT) {
+					// Check if the Object class (hint string) changed, for example Texture2D sampler to Texture3D.
+					// Allow inheritance, Texture2D type sampler should also accept CompressedTexture2D.
+					Object *cached_obj = cached;
+					if (!cached_obj->is_class(E->get().hint_string)) {
+						is_uniform_type_compatible = false;
+					}
+				}
+			}
+
 			PropertyInfo info = E->get();
 			info.name = "shader_parameter/" + info.name;
-			if (!param_cache.has(E->get().name)) {
-				// Property has never been edited, retrieve with default value.
+			if (!is_uniform_cached || !is_uniform_type_compatible) {
+				// Property has never been edited or its type changed, retrieve with default value.
 				Variant default_value = RenderingServer::get_singleton()->shader_get_parameter_default(shader->get_rid(), E->get().name);
 				param_cache.insert(E->get().name, default_value);
 				remap_cache.insert(info.name, E->get().name);
@@ -458,13 +503,11 @@ ShaderMaterial::~ShaderMaterial() {
 /////////////////////////////////
 
 Mutex BaseMaterial3D::material_mutex;
-SelfList<BaseMaterial3D>::List *BaseMaterial3D::dirty_materials = nullptr;
+SelfList<BaseMaterial3D>::List BaseMaterial3D::dirty_materials;
 HashMap<BaseMaterial3D::MaterialKey, BaseMaterial3D::ShaderData, BaseMaterial3D::MaterialKey> BaseMaterial3D::shader_map;
 BaseMaterial3D::ShaderNames *BaseMaterial3D::shader_names = nullptr;
 
 void BaseMaterial3D::init_shaders() {
-	dirty_materials = memnew(SelfList<BaseMaterial3D>::List);
-
 	shader_names = memnew(ShaderNames);
 
 	shader_names->albedo = "albedo";
@@ -551,14 +594,14 @@ HashMap<uint64_t, Ref<StandardMaterial3D>> BaseMaterial3D::materials_for_2d;
 void BaseMaterial3D::finish_shaders() {
 	materials_for_2d.clear();
 
-	memdelete(dirty_materials);
-	dirty_materials = nullptr;
+	dirty_materials.clear();
 
 	memdelete(shader_names);
+	shader_names = nullptr;
 }
 
 void BaseMaterial3D::_update_shader() {
-	dirty_materials->remove(&element);
+	dirty_materials.remove(&element);
 
 	MaterialKey mk = _compute_key();
 	if (mk == current_key) {
@@ -1477,16 +1520,16 @@ void BaseMaterial3D::_update_shader() {
 void BaseMaterial3D::flush_changes() {
 	MutexLock lock(material_mutex);
 
-	while (dirty_materials->first()) {
-		dirty_materials->first()->self()->_update_shader();
+	while (dirty_materials.first()) {
+		dirty_materials.first()->self()->_update_shader();
 	}
 }
 
 void BaseMaterial3D::_queue_shader_change() {
 	MutexLock lock(material_mutex);
 
-	if (is_initialized && !element.in_list()) {
-		dirty_materials->add(&element);
+	if (_is_initialized() && !element.in_list()) {
+		dirty_materials.add(&element);
 	}
 }
 
@@ -3028,8 +3071,7 @@ BaseMaterial3D::BaseMaterial3D(bool p_orm) :
 	flags[FLAG_ALBEDO_TEXTURE_MSDF] = false;
 	flags[FLAG_USE_TEXTURE_REPEAT] = true;
 
-	is_initialized = true;
-	_queue_shader_change();
+	_mark_initialized(callable_mp(this, &BaseMaterial3D::_queue_shader_change));
 }
 
 BaseMaterial3D::~BaseMaterial3D() {

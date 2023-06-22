@@ -30,14 +30,15 @@
 
 #include "export_plugin.h"
 
+#include "logo_svg.gen.h"
+#include "run_icon_svg.gen.h"
+
 #include "core/config/project_settings.h"
 #include "core/io/image_loader.h"
 #include "editor/editor_node.h"
 #include "editor/editor_paths.h"
 #include "editor/editor_scale.h"
 #include "editor/export/editor_export.h"
-#include "platform/windows/logo_svg.gen.h"
-#include "platform/windows/run_icon_svg.gen.h"
 
 #include "modules/modules_enabled.gen.h" // For svg.
 #ifdef MODULE_SVG_ENABLED
@@ -328,9 +329,9 @@ void EditorExportPlatformWindows::get_export_options(List<ExportOption> *r_optio
 	r_options->push_back(ExportOption(PropertyInfo(Variant::STRING, "binary_format/architecture", PROPERTY_HINT_ENUM, "x86_64,x86_32,arm64"), "x86_64"));
 
 	r_options->push_back(ExportOption(PropertyInfo(Variant::BOOL, "codesign/enable"), false, true));
-	r_options->push_back(ExportOption(PropertyInfo(Variant::INT, "codesign/identity_type", PROPERTY_HINT_ENUM, "Select automatically,Use PKCS12 file (specify *.PFX/*.P12 file),Use certificate store (specify SHA-1 hash)"), 0));
-	r_options->push_back(ExportOption(PropertyInfo(Variant::STRING, "codesign/identity", PROPERTY_HINT_GLOBAL_FILE, "*.pfx,*.p12"), ""));
-	r_options->push_back(ExportOption(PropertyInfo(Variant::STRING, "codesign/password", PROPERTY_HINT_PASSWORD), ""));
+	r_options->push_back(ExportOption(PropertyInfo(Variant::INT, "codesign/identity_type", PROPERTY_HINT_ENUM, "Select automatically,Use PKCS12 file (specify *.PFX/*.P12 file),Use certificate store (specify SHA-1 hash)", PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_SECRET), 0));
+	r_options->push_back(ExportOption(PropertyInfo(Variant::STRING, "codesign/identity", PROPERTY_HINT_GLOBAL_FILE, "*.pfx,*.p12", PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_SECRET), ""));
+	r_options->push_back(ExportOption(PropertyInfo(Variant::STRING, "codesign/password", PROPERTY_HINT_PASSWORD, "", PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_SECRET), ""));
 	r_options->push_back(ExportOption(PropertyInfo(Variant::BOOL, "codesign/timestamp"), true));
 	r_options->push_back(ExportOption(PropertyInfo(Variant::STRING, "codesign/timestamp_server_url"), ""));
 	r_options->push_back(ExportOption(PropertyInfo(Variant::INT, "codesign/digest_algorithm", PROPERTY_HINT_ENUM, "SHA1,SHA256"), 1));
@@ -399,7 +400,16 @@ Error EditorExportPlatformWindows::_rcedit_add_data(const Ref<EditorExportPreset
 	}
 #endif
 
-	String icon_path = ProjectSettings::get_singleton()->globalize_path(p_preset->get("application/icon"));
+	String icon_path;
+	if (p_preset->get("application/icon") != "") {
+		icon_path = p_preset->get("application/icon");
+	} else if (GLOBAL_GET("application/config/windows_native_icon") != "") {
+		icon_path = GLOBAL_GET("application/config/windows_native_icon");
+	} else {
+		icon_path = GLOBAL_GET("application/config/icon");
+	}
+	icon_path = ProjectSettings::get_singleton()->globalize_path(icon_path);
+
 	if (p_console_icon) {
 		String console_icon_path = ProjectSettings::get_singleton()->globalize_path(p_preset->get("application/console_wrapper_icon"));
 		if (!console_icon_path.is_empty() && FileAccess::exists(console_icon_path)) {
@@ -518,21 +528,21 @@ Error EditorExportPlatformWindows::_code_sign(const Ref<EditorExportPreset> &p_p
 
 	//identity
 #ifdef WINDOWS_ENABLED
-	int id_type = p_preset->get("codesign/identity_type");
+	int id_type = p_preset->get_or_env("codesign/identity_type", ENV_WIN_CODESIGN_ID_TYPE);
 	if (id_type == 0) { //auto select
 		args.push_back("/a");
 	} else if (id_type == 1) { //pkcs12
-		if (p_preset->get("codesign/identity") != "") {
+		if (p_preset->get_or_env("codesign/identity", ENV_WIN_CODESIGN_ID) != "") {
 			args.push_back("/f");
-			args.push_back(p_preset->get("codesign/identity"));
+			args.push_back(p_preset->get_or_env("codesign/identity", ENV_WIN_CODESIGN_ID));
 		} else {
 			add_message(EXPORT_MESSAGE_WARNING, TTR("Code Signing"), TTR("No identity found."));
 			return FAILED;
 		}
 	} else if (id_type == 2) { //Windows certificate store
-		if (p_preset->get("codesign/identity") != "") {
+		if (p_preset->get_or_env("codesign/identity", ENV_WIN_CODESIGN_ID) != "") {
 			args.push_back("/sha1");
-			args.push_back(p_preset->get("codesign/identity"));
+			args.push_back(p_preset->get_or_env("codesign/identity", ENV_WIN_CODESIGN_ID));
 		} else {
 			add_message(EXPORT_MESSAGE_WARNING, TTR("Code Signing"), TTR("No identity found."));
 			return FAILED;
@@ -543,9 +553,9 @@ Error EditorExportPlatformWindows::_code_sign(const Ref<EditorExportPreset> &p_p
 	}
 #else
 	int id_type = 1;
-	if (p_preset->get("codesign/identity") != "") {
+	if (p_preset->get_or_env("codesign/identity", ENV_WIN_CODESIGN_ID) != "") {
 		args.push_back("-pkcs12");
-		args.push_back(p_preset->get("codesign/identity"));
+		args.push_back(p_preset->get_or_env("codesign/identity", ENV_WIN_CODESIGN_ID));
 	} else {
 		add_message(EXPORT_MESSAGE_WARNING, TTR("Code Signing"), TTR("No identity found."));
 		return FAILED;
@@ -553,13 +563,13 @@ Error EditorExportPlatformWindows::_code_sign(const Ref<EditorExportPreset> &p_p
 #endif
 
 	//password
-	if ((id_type == 1) && (p_preset->get("codesign/password") != "")) {
+	if ((id_type == 1) && (p_preset->get_or_env("codesign/password", ENV_WIN_CODESIGN_PASS) != "")) {
 #ifdef WINDOWS_ENABLED
 		args.push_back("/p");
 #else
 		args.push_back("-pass");
 #endif
-		args.push_back(p_preset->get("codesign/password"));
+		args.push_back(p_preset->get_or_env("codesign/password", ENV_WIN_CODESIGN_PASS));
 	}
 
 	//timestamp
@@ -664,9 +674,9 @@ Error EditorExportPlatformWindows::_code_sign(const Ref<EditorExportPreset> &p_p
 	return OK;
 }
 
-bool EditorExportPlatformWindows::has_valid_export_configuration(const Ref<EditorExportPreset> &p_preset, String &r_error, bool &r_missing_templates) const {
+bool EditorExportPlatformWindows::has_valid_export_configuration(const Ref<EditorExportPreset> &p_preset, String &r_error, bool &r_missing_templates, bool p_debug) const {
 	String err = "";
-	bool valid = EditorExportPlatformPC::has_valid_export_configuration(p_preset, err, r_missing_templates);
+	bool valid = EditorExportPlatformPC::has_valid_export_configuration(p_preset, err, r_missing_templates, p_debug);
 
 	String rcedit_path = EDITOR_GET("export/windows/rcedit");
 	if (p_preset->get("application/modify_resources") && rcedit_path.is_empty()) {

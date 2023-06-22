@@ -183,6 +183,7 @@ struct StrRange {
 class String {
 	CowData<char32_t> _cowdata;
 	static const char32_t _null;
+	static const char32_t _replacement_char;
 
 	void copy_from(const char *p_cstr);
 	void copy_from(const char *p_cstr, const int p_clip_to);
@@ -262,6 +263,7 @@ public:
 
 	signed char casecmp_to(const String &p_str) const;
 	signed char nocasecmp_to(const String &p_str) const;
+	signed char naturalcasecmp_to(const String &p_str) const;
 	signed char naturalnocasecmp_to(const String &p_str) const;
 
 	const char32_t *get_data() const;

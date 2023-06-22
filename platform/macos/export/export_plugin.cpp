@@ -32,15 +32,15 @@
 
 #include "codesign.h"
 #include "lipo.h"
+#include "logo_svg.gen.h"
 #include "macho.h"
+#include "run_icon_svg.gen.h"
 
 #include "core/io/image_loader.h"
 #include "core/string/translation.h"
 #include "editor/editor_node.h"
 #include "editor/editor_paths.h"
 #include "editor/editor_scale.h"
-#include "platform/macos/logo_svg.gen.h"
-#include "platform/macos/run_icon_svg.gen.h"
 
 #include "modules/modules_enabled.gen.h" // For svg and regex.
 #ifdef MODULE_SVG_ENABLED
@@ -73,7 +73,7 @@ String EditorExportPlatformMacOS::get_export_option_warning(const EditorExportPr
 				ad_hoc = true;
 			} break;
 			case 2: { // "rcodesign"
-				ad_hoc = p_preset->get("codesign/certificate_file").operator String().is_empty() || p_preset->get("codesign/certificate_password").operator String().is_empty();
+				ad_hoc = p_preset->get_or_env("codesign/certificate_file", ENV_MAC_CODESIGN_CERT_FILE).operator String().is_empty() || p_preset->get_or_env("codesign/certificate_password", ENV_MAC_CODESIGN_CERT_FILE).operator String().is_empty();
 			} break;
 #ifdef MACOS_ENABLED
 			case 3: { // "codesign"
@@ -114,7 +114,7 @@ String EditorExportPlatformMacOS::get_export_option_warning(const EditorExportPr
 		}
 
 		if (p_name == "codesign/provisioning_profile" && dist_type == 2) {
-			String pprof = p_preset->get("codesign/provisioning_profile");
+			String pprof = p_preset->get_or_env("codesign/provisioning_profile", ENV_MAC_CODESIGN_PROFILE);
 			if (pprof.is_empty()) {
 				return TTR("Provisioning profile is required for App Store distribution.");
 			}
@@ -154,8 +154,8 @@ String EditorExportPlatformMacOS::get_export_option_warning(const EditorExportPr
 
 		if (notary_tool == 2 || notary_tool == 3) {
 			if (p_name == "notarization/apple_id_name" || p_name == "notarization/api_uuid") {
-				String apple_id = p_preset->get("notarization/apple_id_name");
-				String api_uuid = p_preset->get("notarization/api_uuid");
+				String apple_id = p_preset->get_or_env("notarization/apple_id_name", ENV_MAC_NOTARIZATION_APPLE_ID);
+				String api_uuid = p_preset->get_or_env("notarization/api_uuid", ENV_MAC_NOTARIZATION_UUID);
 				if (apple_id.is_empty() && api_uuid.is_empty()) {
 					return TTR("Neither Apple ID name nor App Store Connect issuer ID name not specified.");
 				}
@@ -164,28 +164,28 @@ String EditorExportPlatformMacOS::get_export_option_warning(const EditorExportPr
 				}
 			}
 			if (p_name == "notarization/apple_id_password") {
-				String apple_id = p_preset->get("notarization/apple_id_name");
-				String apple_pass = p_preset->get("notarization/apple_id_password");
+				String apple_id = p_preset->get_or_env("notarization/apple_id_name", ENV_MAC_NOTARIZATION_APPLE_ID);
+				String apple_pass = p_preset->get_or_env("notarization/apple_id_password", ENV_MAC_NOTARIZATION_APPLE_PASS);
 				if (!apple_id.is_empty() && apple_pass.is_empty()) {
 					return TTR("Apple ID password not specified.");
 				}
 			}
 			if (p_name == "notarization/api_key_id") {
-				String api_uuid = p_preset->get("notarization/api_uuid");
-				String api_key = p_preset->get("notarization/api_key_id");
+				String api_uuid = p_preset->get_or_env("notarization/api_uuid", ENV_MAC_NOTARIZATION_UUID);
+				String api_key = p_preset->get_or_env("notarization/api_key_id", ENV_MAC_NOTARIZATION_KEY_ID);
 				if (!api_uuid.is_empty() && api_key.is_empty()) {
 					return TTR("App Store Connect API key ID not specified.");
 				}
 			}
 		} else if (notary_tool == 1) {
 			if (p_name == "notarization/api_uuid") {
-				String api_uuid = p_preset->get("notarization/api_uuid");
+				String api_uuid = p_preset->get_or_env("notarization/api_uuid", ENV_MAC_NOTARIZATION_UUID);
 				if (api_uuid.is_empty()) {
 					return TTR("App Store Connect issuer ID name not specified.");
 				}
 			}
 			if (p_name == "notarization/api_key_id") {
-				String api_key = p_preset->get("notarization/api_key_id");
+				String api_key = p_preset->get_or_env("notarization/api_key_id", ENV_MAC_NOTARIZATION_KEY_ID);
 				if (api_key.is_empty()) {
 					return TTR("App Store Connect API key ID not specified.");
 				}
@@ -368,7 +368,7 @@ void EditorExportPlatformMacOS::get_export_options(List<ExportOption> *r_options
 	r_options->push_back(ExportOption(PropertyInfo(Variant::STRING, "custom_template/debug", PROPERTY_HINT_GLOBAL_FILE, "*.zip"), ""));
 	r_options->push_back(ExportOption(PropertyInfo(Variant::STRING, "custom_template/release", PROPERTY_HINT_GLOBAL_FILE, "*.zip"), ""));
 
-	r_options->push_back(ExportOption(PropertyInfo(Variant::INT, "debug/export_console_script", PROPERTY_HINT_ENUM, "No,Debug Only,Debug and Release"), 1));
+	r_options->push_back(ExportOption(PropertyInfo(Variant::INT, "debug/export_console_wrapper", PROPERTY_HINT_ENUM, "No,Debug Only,Debug and Release"), 1));
 	r_options->push_back(ExportOption(PropertyInfo(Variant::STRING, "application/icon", PROPERTY_HINT_FILE, "*.icns,*.png,*.webp,*.svg"), ""));
 	r_options->push_back(ExportOption(PropertyInfo(Variant::INT, "application/icon_interpolation", PROPERTY_HINT_ENUM, "Nearest neighbor,Bilinear,Cubic,Trilinear,Lanczos"), 4));
 	r_options->push_back(ExportOption(PropertyInfo(Variant::STRING, "application/bundle_identifier", PROPERTY_HINT_PLACEHOLDER_TEXT, "com.example.game"), "", false, true));
@@ -398,10 +398,10 @@ void EditorExportPlatformMacOS::get_export_options(List<ExportOption> *r_options
 	// "codesign" only options:
 	r_options->push_back(ExportOption(PropertyInfo(Variant::STRING, "codesign/identity", PROPERTY_HINT_PLACEHOLDER_TEXT, "Type: Name (ID)"), ""));
 	// "rcodesign" only options:
-	r_options->push_back(ExportOption(PropertyInfo(Variant::STRING, "codesign/certificate_file", PROPERTY_HINT_GLOBAL_FILE, "*.pfx,*.p12"), ""));
-	r_options->push_back(ExportOption(PropertyInfo(Variant::STRING, "codesign/certificate_password", PROPERTY_HINT_PASSWORD), ""));
+	r_options->push_back(ExportOption(PropertyInfo(Variant::STRING, "codesign/certificate_file", PROPERTY_HINT_GLOBAL_FILE, "*.pfx,*.p12", PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_SECRET), ""));
+	r_options->push_back(ExportOption(PropertyInfo(Variant::STRING, "codesign/certificate_password", PROPERTY_HINT_PASSWORD, "", PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_SECRET), ""));
 	// "codesign" and "rcodesign" only options:
-	r_options->push_back(ExportOption(PropertyInfo(Variant::STRING, "codesign/provisioning_profile", PROPERTY_HINT_GLOBAL_FILE, "*.provisionprofile"), "", false, true));
+	r_options->push_back(ExportOption(PropertyInfo(Variant::STRING, "codesign/provisioning_profile", PROPERTY_HINT_GLOBAL_FILE, "*.provisionprofile", PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_SECRET), "", false, true));
 
 	r_options->push_back(ExportOption(PropertyInfo(Variant::STRING, "codesign/entitlements/custom_file", PROPERTY_HINT_GLOBAL_FILE, "*.plist"), "", true));
 	r_options->push_back(ExportOption(PropertyInfo(Variant::BOOL, "codesign/entitlements/allow_jit_code_execution"), false));
@@ -434,12 +434,12 @@ void EditorExportPlatformMacOS::get_export_options(List<ExportOption> *r_options
 	r_options->push_back(ExportOption(PropertyInfo(Variant::INT, "notarization/notarization", PROPERTY_HINT_ENUM, "Disabled,rcodesign"), 0, true));
 #endif
 	// "altool" and "notarytool" only options:
-	r_options->push_back(ExportOption(PropertyInfo(Variant::STRING, "notarization/apple_id_name", PROPERTY_HINT_PLACEHOLDER_TEXT, "Apple ID email"), "", false, true));
-	r_options->push_back(ExportOption(PropertyInfo(Variant::STRING, "notarization/apple_id_password", PROPERTY_HINT_PASSWORD, "Enable two-factor authentication and provide app-specific password"), "", false, true));
+	r_options->push_back(ExportOption(PropertyInfo(Variant::STRING, "notarization/apple_id_name", PROPERTY_HINT_PLACEHOLDER_TEXT, "Apple ID email", PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_SECRET), "", false, true));
+	r_options->push_back(ExportOption(PropertyInfo(Variant::STRING, "notarization/apple_id_password", PROPERTY_HINT_PASSWORD, "Enable two-factor authentication and provide app-specific password", PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_SECRET), "", false, true));
 	// "altool", "notarytool" and "rcodesign" only options:
-	r_options->push_back(ExportOption(PropertyInfo(Variant::STRING, "notarization/api_uuid", PROPERTY_HINT_PLACEHOLDER_TEXT, "App Store Connect issuer ID UUID"), "", false, true));
-	r_options->push_back(ExportOption(PropertyInfo(Variant::STRING, "notarization/api_key", PROPERTY_HINT_GLOBAL_FILE, "*.p8"), "", false, true));
-	r_options->push_back(ExportOption(PropertyInfo(Variant::STRING, "notarization/api_key_id", PROPERTY_HINT_PLACEHOLDER_TEXT, "App Store Connect API key ID"), "", false, true));
+	r_options->push_back(ExportOption(PropertyInfo(Variant::STRING, "notarization/api_uuid", PROPERTY_HINT_PLACEHOLDER_TEXT, "App Store Connect issuer ID UUID", PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_SECRET), "", false, true));
+	r_options->push_back(ExportOption(PropertyInfo(Variant::STRING, "notarization/api_key", PROPERTY_HINT_GLOBAL_FILE, "*.p8", PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_SECRET), "", false, true));
+	r_options->push_back(ExportOption(PropertyInfo(Variant::STRING, "notarization/api_key_id", PROPERTY_HINT_PLACEHOLDER_TEXT, "App Store Connect API key ID", PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_SECRET), "", false, true));
 
 	r_options->push_back(ExportOption(PropertyInfo(Variant::STRING, "privacy/microphone_usage_description", PROPERTY_HINT_PLACEHOLDER_TEXT, "Provide a message if you need to use the microphone"), "", false, true));
 	r_options->push_back(ExportOption(PropertyInfo(Variant::DICTIONARY, "privacy/microphone_usage_description_localized", PROPERTY_HINT_LOCALIZABLE_STRING), Dictionary()));
@@ -776,24 +776,24 @@ Error EditorExportPlatformMacOS::_notarize(const Ref<EditorExportPreset> &p_pres
 
 			args.push_back("notary-submit");
 
-			if (p_preset->get("notarization/api_uuid") == "") {
+			if (p_preset->get_or_env("notarization/api_uuid", ENV_MAC_NOTARIZATION_UUID) == "") {
 				add_message(EXPORT_MESSAGE_ERROR, TTR("Notarization"), TTR("App Store Connect issuer ID name not specified."));
 				return Error::FAILED;
 			}
-			if (p_preset->get("notarization/api_key") == "") {
+			if (p_preset->get_or_env("notarization/api_key", ENV_MAC_NOTARIZATION_KEY) == "") {
 				add_message(EXPORT_MESSAGE_ERROR, TTR("Notarization"), TTR("App Store Connect API key ID not specified."));
 				return Error::FAILED;
 			}
 
 			args.push_back("--api-issuer");
-			args.push_back(p_preset->get("notarization/api_uuid"));
+			args.push_back(p_preset->get_or_env("notarization/api_uuid", ENV_MAC_NOTARIZATION_UUID));
 
 			args.push_back("--api-key");
-			args.push_back(p_preset->get("notarization/api_key_id"));
+			args.push_back(p_preset->get_or_env("notarization/api_key_id", ENV_MAC_NOTARIZATION_KEY_ID));
 
-			if (!p_preset->get("notarization/api_key").operator String().is_empty()) {
+			if (!p_preset->get_or_env("notarization/api_key", ENV_MAC_NOTARIZATION_KEY).operator String().is_empty()) {
 				args.push_back("--api-key-path");
-				args.push_back(p_preset->get("notarization/api_key"));
+				args.push_back(p_preset->get_or_env("notarization/api_key", ENV_MAC_NOTARIZATION_KEY));
 			}
 
 			args.push_back(p_path);
@@ -840,40 +840,40 @@ Error EditorExportPlatformMacOS::_notarize(const Ref<EditorExportPreset> &p_pres
 
 			args.push_back(p_path);
 
-			if (p_preset->get("notarization/apple_id_name") == "" && p_preset->get("notarization/api_uuid") == "") {
+			if (p_preset->get_or_env("notarization/apple_id_name", ENV_MAC_NOTARIZATION_APPLE_ID) == "" && p_preset->get_or_env("notarization/api_uuid", ENV_MAC_NOTARIZATION_UUID) == "") {
 				add_message(EXPORT_MESSAGE_ERROR, TTR("Notarization"), TTR("Neither Apple ID name nor App Store Connect issuer ID name not specified."));
 				return Error::FAILED;
 			}
-			if (p_preset->get("notarization/apple_id_name") != "" && p_preset->get("notarization/api_uuid") != "") {
+			if (p_preset->get_or_env("notarization/apple_id_name", ENV_MAC_NOTARIZATION_APPLE_ID) != "" && p_preset->get_or_env("notarization/api_uuid", ENV_MAC_NOTARIZATION_UUID) != "") {
 				add_message(EXPORT_MESSAGE_ERROR, TTR("Notarization"), TTR("Both Apple ID name and App Store Connect issuer ID name are specified, only one should be set at the same time."));
 				return Error::FAILED;
 			}
 
-			if (p_preset->get("notarization/apple_id_name") != "") {
-				if (p_preset->get("notarization/apple_id_password") == "") {
+			if (p_preset->get_or_env("notarization/apple_id_name", ENV_MAC_NOTARIZATION_APPLE_ID) != "") {
+				if (p_preset->get_or_env("notarization/apple_id_password", ENV_MAC_NOTARIZATION_APPLE_PASS) == "") {
 					add_message(EXPORT_MESSAGE_ERROR, TTR("Notarization"), TTR("Apple ID password not specified."));
 					return Error::FAILED;
 				}
 				args.push_back("--apple-id");
-				args.push_back(p_preset->get("notarization/apple_id_name"));
+				args.push_back(p_preset->get_or_env("notarization/apple_id_name", ENV_MAC_NOTARIZATION_APPLE_ID));
 
 				args.push_back("--password");
-				args.push_back(p_preset->get("notarization/apple_id_password"));
+				args.push_back(p_preset->get_or_env("notarization/apple_id_password", ENV_MAC_NOTARIZATION_APPLE_PASS));
 			} else {
-				if (p_preset->get("notarization/api_key_id") == "") {
+				if (p_preset->get_or_env("notarization/api_key_id", ENV_MAC_NOTARIZATION_KEY_ID) == "") {
 					add_message(EXPORT_MESSAGE_ERROR, TTR("Notarization"), TTR("App Store Connect API key ID not specified."));
 					return Error::FAILED;
 				}
 				args.push_back("--issuer");
-				args.push_back(p_preset->get("notarization/api_uuid"));
+				args.push_back(p_preset->get_or_env("notarization/api_uuid", ENV_MAC_NOTARIZATION_UUID));
 
-				if (!p_preset->get("notarization/api_key").operator String().is_empty()) {
+				if (!p_preset->get_or_env("notarization/api_key", ENV_MAC_NOTARIZATION_KEY).operator String().is_empty()) {
 					args.push_back("--key");
-					args.push_back(p_preset->get("notarization/api_key"));
+					args.push_back(p_preset->get_or_env("notarization/api_key", ENV_MAC_NOTARIZATION_KEY));
 				}
 
 				args.push_back("--key-id");
-				args.push_back(p_preset->get("notarization/api_key_id"));
+				args.push_back(p_preset->get_or_env("notarization/api_key_id", ENV_MAC_NOTARIZATION_KEY_ID));
 			}
 
 			args.push_back("--no-progress");
@@ -925,35 +925,35 @@ Error EditorExportPlatformMacOS::_notarize(const Ref<EditorExportPreset> &p_pres
 			args.push_back("--primary-bundle-id");
 			args.push_back(p_preset->get("application/bundle_identifier"));
 
-			if (p_preset->get("notarization/apple_id_name") == "" && p_preset->get("notarization/api_uuid") == "") {
+			if (p_preset->get_or_env("notarization/apple_id_name", ENV_MAC_NOTARIZATION_APPLE_ID) == "" && p_preset->get_or_env("notarization/api_uuid", ENV_MAC_NOTARIZATION_UUID) == "") {
 				add_message(EXPORT_MESSAGE_ERROR, TTR("Notarization"), TTR("Neither Apple ID name nor App Store Connect issuer ID name not specified."));
 				return Error::FAILED;
 			}
-			if (p_preset->get("notarization/apple_id_name") != "" && p_preset->get("notarization/api_uuid") != "") {
+			if (p_preset->get_or_env("notarization/apple_id_name", ENV_MAC_NOTARIZATION_APPLE_ID) != "" && p_preset->get_or_env("notarization/api_uuid", ENV_MAC_NOTARIZATION_UUID) != "") {
 				add_message(EXPORT_MESSAGE_ERROR, TTR("Notarization"), TTR("Both Apple ID name and App Store Connect issuer ID name are specified, only one should be set at the same time."));
 				return Error::FAILED;
 			}
 
-			if (p_preset->get("notarization/apple_id_name") != "") {
-				if (p_preset->get("notarization/apple_id_password") == "") {
+			if (p_preset->get_or_env("notarization/apple_id_name", ENV_MAC_NOTARIZATION_APPLE_ID) != "") {
+				if (p_preset->get_or_env("notarization/apple_id_password", ENV_MAC_NOTARIZATION_APPLE_PASS) == "") {
 					add_message(EXPORT_MESSAGE_ERROR, TTR("Notarization"), TTR("Apple ID password not specified."));
 					return Error::FAILED;
 				}
 				args.push_back("--username");
-				args.push_back(p_preset->get("notarization/apple_id_name"));
+				args.push_back(p_preset->get_or_env("notarization/apple_id_name", ENV_MAC_NOTARIZATION_APPLE_ID));
 
 				args.push_back("--password");
-				args.push_back(p_preset->get("notarization/apple_id_password"));
+				args.push_back(p_preset->get_or_env("notarization/apple_id_password", ENV_MAC_NOTARIZATION_APPLE_PASS));
 			} else {
-				if (p_preset->get("notarization/api_key") == "") {
+				if (p_preset->get_or_env("notarization/api_key", ENV_MAC_NOTARIZATION_KEY) == "") {
 					add_message(EXPORT_MESSAGE_ERROR, TTR("Notarization"), TTR("App Store Connect API key ID not specified."));
 					return Error::FAILED;
 				}
 				args.push_back("--apiIssuer");
-				args.push_back(p_preset->get("notarization/api_uuid"));
+				args.push_back(p_preset->get_or_env("notarization/api_uuid", ENV_MAC_NOTARIZATION_UUID));
 
 				args.push_back("--apiKey");
-				args.push_back(p_preset->get("notarization/api_key_id"));
+				args.push_back(p_preset->get_or_env("notarization/api_key_id", ENV_MAC_NOTARIZATION_KEY_ID));
 			}
 
 			args.push_back("--type");
@@ -1032,8 +1032,8 @@ Error EditorExportPlatformMacOS::_code_sign(const Ref<EditorExportPreset> &p_pre
 				args.push_back(p_ent_path);
 			}
 
-			String certificate_file = p_preset->get("codesign/certificate_file");
-			String certificate_pass = p_preset->get("codesign/certificate_password");
+			String certificate_file = p_preset->get_or_env("codesign/certificate_file", ENV_MAC_CODESIGN_CERT_FILE);
+			String certificate_pass = p_preset->get_or_env("codesign/certificate_password", ENV_MAC_CODESIGN_CERT_PASS);
 			if (!certificate_file.is_empty() && !certificate_pass.is_empty()) {
 				args.push_back("--p12-file");
 				args.push_back(certificate_file);
@@ -1674,16 +1674,18 @@ Error EditorExportPlatformMacOS::export_project(const Ref<EditorExportPreset> &p
 
 		if (file == "Contents/Resources/icon.icns") {
 			// See if there is an icon.
-			String iconpath;
+			String icon_path;
 			if (p_preset->get("application/icon") != "") {
-				iconpath = p_preset->get("application/icon");
+				icon_path = p_preset->get("application/icon");
+			} else if (GLOBAL_GET("application/config/macos_native_icon") != "") {
+				icon_path = GLOBAL_GET("application/config/macos_native_icon");
 			} else {
-				iconpath = GLOBAL_GET("application/config/icon");
+				icon_path = GLOBAL_GET("application/config/icon");
 			}
 
-			if (!iconpath.is_empty()) {
-				if (iconpath.get_extension() == "icns") {
-					Ref<FileAccess> icon = FileAccess::open(iconpath, FileAccess::READ);
+			if (!icon_path.is_empty()) {
+				if (icon_path.get_extension() == "icns") {
+					Ref<FileAccess> icon = FileAccess::open(icon_path, FileAccess::READ);
 					if (icon.is_valid()) {
 						data.resize(icon->get_length());
 						icon->get_buffer(&data.write[0], icon->get_length());
@@ -1691,7 +1693,7 @@ Error EditorExportPlatformMacOS::export_project(const Ref<EditorExportPreset> &p
 				} else {
 					Ref<Image> icon;
 					icon.instantiate();
-					err = ImageLoader::load_image(iconpath, icon);
+					err = ImageLoader::load_image(icon_path, icon);
 					if (err == OK && !icon->is_empty()) {
 						_make_icon(p_preset, icon, data);
 					}
@@ -1737,14 +1739,14 @@ Error EditorExportPlatformMacOS::export_project(const Ref<EditorExportPreset> &p
 		err = ERR_FILE_NOT_FOUND;
 	}
 
-	// Save console script.
+	// Save console wrapper.
 	if (err == OK) {
-		int con_scr = p_preset->get("debug/export_console_script");
+		int con_scr = p_preset->get("debug/export_console_wrapper");
 		if ((con_scr == 1 && p_debug) || (con_scr == 2)) {
 			err = _export_debug_script(p_preset, pkg_name, tmp_app_path_name.get_file() + "/Contents/MacOS/" + pkg_name, scr_path);
 			FileAccess::set_unix_permissions(scr_path, 0755);
 			if (err != OK) {
-				add_message(EXPORT_MESSAGE_ERROR, TTR("Export"), TTR("Could not create console script."));
+				add_message(EXPORT_MESSAGE_ERROR, TTR("Export"), TTR("Could not create console wrapper."));
 			}
 		}
 	}
@@ -1763,7 +1765,7 @@ Error EditorExportPlatformMacOS::export_project(const Ref<EditorExportPreset> &p
 				ad_hoc = true;
 			} break;
 			case 2: { // "rcodesign"
-				ad_hoc = p_preset->get("codesign/certificate_file").operator String().is_empty() || p_preset->get("codesign/certificate_password").operator String().is_empty();
+				ad_hoc = p_preset->get_or_env("codesign/certificate_file", ENV_MAC_CODESIGN_CERT_FILE).operator String().is_empty() || p_preset->get_or_env("codesign/certificate_password", ENV_MAC_CODESIGN_CERT_PASS).operator String().is_empty();
 			} break;
 #ifdef MACOS_ENABLED
 			case 3: { // "codesign"
@@ -1857,7 +1859,7 @@ Error EditorExportPlatformMacOS::export_project(const Ref<EditorExportPreset> &p
 
 				int dist_type = p_preset->get("export/distribution_type");
 				if (dist_type == 2) {
-					String pprof = p_preset->get("codesign/provisioning_profile");
+					String pprof = p_preset->get_or_env("codesign/provisioning_profile", ENV_MAC_CODESIGN_PROFILE);
 					String teamid = p_preset->get("codesign/apple_team_id");
 					String bid = p_preset->get("application/bundle_identifier");
 					if (!pprof.is_empty() && !teamid.is_empty()) {
@@ -1990,7 +1992,7 @@ Error EditorExportPlatformMacOS::export_project(const Ref<EditorExportPreset> &p
 		if (err == OK && sign_enabled) {
 			int dist_type = p_preset->get("export/distribution_type");
 			if (dist_type == 2) {
-				String pprof = p_preset->get("codesign/provisioning_profile").operator String();
+				String pprof = p_preset->get_or_env("codesign/provisioning_profile", ENV_MAC_CODESIGN_PROFILE).operator String();
 				if (!pprof.is_empty()) {
 					Ref<DirAccess> da = DirAccess::create(DirAccess::ACCESS_FILESYSTEM);
 					err = da->copy(pprof, tmp_app_path_name + "/Contents/embedded.provisionprofile");
@@ -2079,10 +2081,8 @@ Error EditorExportPlatformMacOS::export_project(const Ref<EditorExportPreset> &p
 	return err;
 }
 
-bool EditorExportPlatformMacOS::has_valid_export_configuration(const Ref<EditorExportPreset> &p_preset, String &r_error, bool &r_missing_templates) const {
+bool EditorExportPlatformMacOS::has_valid_export_configuration(const Ref<EditorExportPreset> &p_preset, String &r_error, bool &r_missing_templates, bool p_debug) const {
 	String err;
-	bool valid = false;
-
 	// Look for export templates (custom templates).
 	bool dvalid = false;
 	bool rvalid = false;
@@ -2100,8 +2100,17 @@ bool EditorExportPlatformMacOS::has_valid_export_configuration(const Ref<EditorE
 		}
 	}
 
-	String architecture = p_preset->get("binary_format/architecture");
+	// Look for export templates (official templates, check only is custom templates are not set).
+	if (!dvalid || !rvalid) {
+		dvalid = exists_export_template("macos.zip", &err);
+		rvalid = dvalid; // Both in the same ZIP.
+	}
 
+	bool valid = dvalid || rvalid;
+	r_missing_templates = !valid;
+
+	// Check the texture formats, which vary depending on the target architecture.
+	String architecture = p_preset->get("binary_format/architecture");
 	if (architecture == "universal" || architecture == "x86_64") {
 		const String bc_error = test_bc();
 		if (!bc_error.is_empty()) {
@@ -2118,19 +2127,9 @@ bool EditorExportPlatformMacOS::has_valid_export_configuration(const Ref<EditorE
 		ERR_PRINT("Invalid architecture");
 	}
 
-	// Look for export templates (official templates, check only is custom templates are not set).
-	if (!dvalid || !rvalid) {
-		dvalid = exists_export_template("macos.zip", &err);
-		rvalid = dvalid; // Both in the same ZIP.
-	}
-
-	valid = dvalid || rvalid;
-	r_missing_templates = !valid;
-
 	if (!err.is_empty()) {
 		r_error = err;
 	}
-
 	return valid;
 }
 
@@ -2147,7 +2146,7 @@ bool EditorExportPlatformMacOS::has_valid_project_configuration(const Ref<Editor
 			ad_hoc = true;
 		} break;
 		case 2: { // "rcodesign"
-			ad_hoc = p_preset->get("codesign/certificate_file").operator String().is_empty() || p_preset->get("codesign/certificate_password").operator String().is_empty();
+			ad_hoc = p_preset->get_or_env("codesign/certificate_file", ENV_MAC_CODESIGN_CERT_FILE).operator String().is_empty() || p_preset->get_or_env("codesign/certificate_password", ENV_MAC_CODESIGN_CERT_PASS).operator String().is_empty();
 		} break;
 #ifdef MACOS_ENABLED
 		case 3: { // "codesign"
